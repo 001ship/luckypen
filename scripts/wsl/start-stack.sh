@@ -43,8 +43,42 @@ if ! pgrep -x dockerd >/dev/null 2>&1; then
   fi
   if [ -n "$HOST_PROXY" ]; then
     export HTTP_PROXY="$HOST_PROXY" HTTPS_PROXY="$HOST_PROXY"
-    # 镜像加速源直连更快，不要绕代理
-    export NO_PROXY="localhost,127.0.0.1,::1,docker.1panel.live,docker.m.daocloud.io,hub.rat.dev"
+    export NO_PROXY="localhost,127.0.0.1,::1"
+    # 有代理时清空 registry-mirrors，让 docker 直连 registry-1.docker.io。
+    # 实测差异极大：走国内加速源约 24 MB/分钟，走代理直连约 4.6 GB/分钟，
+    # 同一个 5.7 GB 镜像前者要 4 小时、后者 1.2 分钟。原因是对 vxcontrol/*
+    # 这类镜像，加速源要么 403 要么卡死，反而拖慢整体。
+    if [ -f /etc/docker/daemon.json ]; then
+      python3 - <<'PY' 2>/dev/null || true
+import json
+p = '/etc/docker/daemon.json'
+try:
+    d = json.load(open(p))
+except Exception:
+    raise SystemExit(0)
+if d.get('registry-mirrors'):
+    d['registry-mirrors'] = []
+    json.dump(d, open(p, 'w'), indent=2)
+    print('  registry-mirrors cleared: proxy direct is faster')
+PY
+    fi
+  else
+    # 没有代理时保留加速源，否则国内网络拉不动镜像
+    if [ -f /etc/docker/daemon.json ]; then
+      python3 - <<'PY' 2>/dev/null || true
+import json
+p = '/etc/docker/daemon.json'
+MIRRORS = ["https://docker.1panel.live", "https://docker.m.daocloud.io", "https://hub.rat.dev"]
+try:
+    d = json.load(open(p))
+except Exception:
+    raise SystemExit(0)
+if not d.get('registry-mirrors'):
+    d['registry-mirrors'] = MIRRORS
+    json.dump(d, open(p, 'w'), indent=2)
+    print('  registry-mirrors restored (no proxy)')
+PY
+    fi
   fi
   nohup dockerd -H unix:///var/run/docker.sock >/var/log/dockerd.log 2>&1 &
 fi

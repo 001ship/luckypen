@@ -15,7 +15,8 @@ core | vxcontrol/pentagi:latest                          | 必需 | 889 MB | Pen
 core | vxcontrol/pgvector:latest                         | 必需 | 614 MB | PostgreSQL 16 + pgvector，持久化与向量检索
 
 # ---------- 沙箱 ----------
-sandbox | debian:latest                                 | 必需 | 187 MB | agent 执行命令的隔离容器基础镜像
+sandbox | vxcontrol/kali-linux:latest                    | 必需 | 5.7 GB | 渗透任务沙箱，含 173 个工具。解压后 22.66 GB
+sandbox | debian:latest                                 | 可选 | 187 MB | 精简沙箱，无渗透工具，仅在拉不到 kali 时兜底
 
 # ---------- 可选：指标导出 ----------
 optional | quay.io/prometheuscommunity/postgres-exporter:v0.16.0 | 可选 | 35 MB | pgvector 指标导出，不装不影响功能

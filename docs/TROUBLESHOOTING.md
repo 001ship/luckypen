@@ -252,6 +252,92 @@ Select-String -Path C:\pentagi\docker-compose.yml -Pattern 'host.docker.internal
 
 ---
 
+## 渗透沙箱
+
+### nmap 报 `exec: Operation not permitted`
+
+**症状**：容器里 nmap 直接失败，`id` 显示 root，其他命令都正常。
+
+```
+/usr/bin/nmap: 6: exec: /usr/lib/nmap/nmap: Operation not permitted
+```
+
+**原因**：Kali 的 nmap 二进制带文件 capability
+
+```bash
+getcap /usr/lib/nmap/nmap
+# cap_net_bind_service,cap_net_admin,cap_net_raw=eip
+```
+
+PentAGI 沙箱是 `CapDrop: ALL` + 白名单，三个 cap 必须**全部**落在 bounding set 里才能 exec。白名单自带 `NET_RAW` 和 `NET_BIND_SERVICE`，**`NET_ADMIN` 要靠开关**。
+
+这个报错极具误导性——看着像权限不足，实际是 exec 阶段就被内核拒绝，跟容器内是不是 root 无关。
+
+**排查**：
+
+```powershell
+wsl -d PentAGI -u root -- docker exec pentagi env | Select-String DOCKER_NET_ADMIN
+```
+
+**修复**（`C:\pentagi\.env`）：
+
+```bash
+DOCKER_NET_ADMIN=true
+DOCKER_DEFAULT_IMAGE_FOR_PENTEST=vxcontrol/kali-linux:latest
+DOCKER_IMAGE_SELECTION_MODE=fixed
+```
+
+```powershell
+wsl -d PentAGI -u root -- bash -lc "cd /opt/pentagi && docker compose up -d --force-recreate pentagi"
+```
+
+**验证**（用 PentAGI 沙箱的完整 capability 组合模拟）：
+
+```powershell
+wsl -d PentAGI -u root -- docker run --rm --cap-drop=ALL `
+  --cap-add=CHOWN --cap-add=DAC_OVERRIDE --cap-add=FSETID --cap-add=FOWNER `
+  --cap-add=NET_RAW --cap-add=SETGID --cap-add=SETUID --cap-add=SETFCAP `
+  --cap-add=SETPCAP --cap-add=NET_BIND_SERVICE --cap-add=SYS_CHROOT `
+  --cap-add=KILL --cap-add=AUDIT_WRITE --cap-add=SYS_PTRACE --cap-add=NET_ADMIN `
+  --entrypoint sh vxcontrol/kali-linux:latest -c "nmap --version"
+```
+
+### agent 说 nmap / sqlmap `command not found`
+
+沙箱用的是裸 `debian:latest`，里面没有渗透工具。
+
+```powershell
+# 确认沙箱镜像
+wsl -d PentAGI -u root -- docker ps -a --filter name=pentagi-terminal --format "{{.Names}} {{.Image}}"
+```
+
+看到 `debian` 说明 kali 镜像没拉下来或没配置。
+
+```powershell
+wsl -d PentAGI -u root -- docker images | Select-String kali
+```
+
+没有就先拉镜像（有代理时清空 mirrors，快 193 倍，见 README「渗透沙箱」），再按上一条配置 `DOCKER_DEFAULT_IMAGE_FOR_PENTEST`。
+
+### 拉 5.7 GB 的 kali 镜像要几个小时
+
+镜像加速源对 `vxcontrol/*` 支持很差，实测 24 MB/分钟；走本地代理直连 4635 MB/分钟，差 193 倍。
+
+```powershell
+# 1. 确认 dockerd 已带代理
+wsl -d PentAGI -u root -- docker info | Select-String -Pattern "HTTP Proxy|HTTPS Proxy"
+
+# 2. 重启全栈（start-stack.sh 探测到代理会自动清空 registry-mirrors）
+wsl -d PentAGI -u root -- /usr/local/bin/pentagi-start.sh
+
+# 3. 确认 mirrors 已清空
+wsl -d PentAGI -u root -- docker info --format '{{json .RegistryConfig.Mirrors}}'
+
+# 4. 重新拉取，观察速度
+wsl -d PentAGI -u root -- bash -lc "docker pull vxcontrol/kali-linux:latest > /tmp/pull.log 2>&1 &"
+```
+
+若没代理，只能等，或者用 `docker save` 从别的机器导出再导入。
 ## 向量嵌入（embedding）
 
 ### 启动日志报 `failed to create embedder`

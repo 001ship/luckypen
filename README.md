@@ -30,6 +30,7 @@
   - [Access Credentials](#access-credentials)
   - [Accessing from External Networks](#accessing-from-external-networks)
 - [中文界面实现](#中文界面实现)
+- [渗透沙箱](#渗透沙箱)
 - [内置浏览器](#内置浏览器)
 - [向量嵌入](#向量嵌入)
 - [镜像自托管](#镜像自托管)
@@ -300,6 +301,86 @@ wsl -d PentAGI -u root -- cp /mnt/c/pentagi/i18n-dict.js /opt/pentagi/fe-cn/i18n
 
 **维护工具**（`i18n/tools/`）：从新版本前端提取待译文案、分类去噪、扫描覆盖率。
 
+## 渗透沙箱
+
+agent 执行命令跑在一个独立的 Docker 沙箱里。**这个沙箱默认是裸 `debian:latest`，里面没有任何渗透工具** —— 如果不对，agent 调 nmap 会直接 `command not found`。
+
+### 需要的镜像
+
+```bash
+vxcontrol/kali-linux:latest    5.7 GB（压缩）/ 22.66 GB（解压后）
+```
+
+含 **173 个工具 / 25 个分类**：
+
+| 分类 | 代表工具 |
+|---|---|
+| 侦察扫描 | `nmap` `masscan` `amass` `theharvester` `dnsrecon` `subfinder` `dnsx` `shuffledns` |
+| Web 测试 | `sqlmap` `nikto` `whatweb` `gobuster` `dirsearch` `ffuf` `feroxbuster` `wpscan` `commix` `xsstrike` `nuclei` `httpx` `katana` |
+| 漏洞利用 | `msfconsole` `msfvenom` `searchsploit` |
+| 密码攻击 | `hydra` `john` `hashcat` `medusa` `patator` `crunch` |
+| Windows/AD | `impacket-*`(18) `evil-winrm` `netexec` `responder` `certipy-ad` `enum4linux` `mimikatz` |
+| 流量隧道 | `tshark` `tcpdump` `mitmdump` `proxychains4` `chisel` `ligolo-proxy` `iodine` |
+| 逆向取证 | `radare2` `binwalk` `ROPgadget` `ropper` `steghide` `foremost` `oletools` |
+| 基础环境 | `python3` `pip3` `seclists` `sqlmap` `impacket` `pwntools` `scapy` `docker-cli` |
+
+### 必须的配置
+
+```bash
+DOCKER_DEFAULT_IMAGE_FOR_PENTEST=vxcontrol/kali-linux:latest
+DOCKER_IMAGE_SELECTION_MODE=fixed
+DOCKER_ALLOWED_IMAGES=vxcontrol/kali-linux:latest,debian:latest
+DOCKER_NET_ADMIN=true
+```
+
+### 为什么 `DOCKER_NET_ADMIN` 必须开
+
+Kali 的 `nmap` 不是普通二进制，它带了文件 capability：
+
+```
+/usr/lib/nmap/nmap  cap_net_bind_service,cap_net_admin,cap_net_raw=eip
+```
+
+而 PentAGI 的沙箱用 `CapDrop: ALL` 加显式白名单（`backend/pkg/docker/worker_spec.go`）：
+
+```go
+capAdd := []string{
+    "CHOWN", "DAC_OVERRIDE", "FSETID", "FOWNER",
+    "NET_RAW", "SETGID", "SETUID", "SETFCAP", "SETPCAP",
+    "NET_BIND_SERVICE", "SYS_CHROOT", "KILL", "AUDIT_WRITE", "SYS_PTRACE",
+}
+if cfg.DockerNetAdmin { capAdd = append(capAdd, "NET_ADMIN") }
+```
+
+`NET_RAW` 和 `NET_BIND_SERVICE` 白名单自带，**只有 `NET_ADMIN` 需要开关**。三个 cap 必须全部落在 bounding set 里，二进制才能 exec；缺一个就报：
+
+```
+/usr/bin/nmap: 6: exec: /usr/lib/nmap/nmap: Operation not permitted
+```
+
+这个报错极具误导性——看着像权限不足，实际是 **exec 阶段就被内核拒绝**，跟容器内 `id` 是不是 root 无关。
+
+### 拉镜像：有代理就别用加速源
+
+实测同一台机器、同一个 5.7 GB 镜像：
+
+| 链路 | 速度 | 耗时 |
+|---|---|---|
+| 国内镜像加速源（1panel / daocloud / 1ms.run） | 24 MB/分钟 | **约 4 小时** |
+| 走本地 HTTP 代理直连 `registry-1.docker.io` | 4635 MB/分钟 | **约 1.2 分钟** |
+
+差 **193 倍**。原因是对 `vxcontrol/*` 这类镜像，加速源要么返回 403（daocloud 白名单拒绝）、要么建连后零字节停滞（1panel），docker 在这些源之间反复重试，整体速度被拖垮。
+
+`scripts/wsl/start-stack.sh` 已按此实现：**探测到宿主代理就清空 `registry-mirrors` 走代理直连，探测不到才恢复加速源**。
+
+### 验证沙箱真的用上了
+
+```powershell
+# 看沙箱容器用的什么镜像
+wsl -d PentAGI -u root -- docker ps -a --filter name=pentagi-terminal --format "{{.Names}} {{.Image}}"
+```
+
+开个 flow 让它跑 `nmap -sV <目标>`，能出结果就说明通了。若报 `Operation not permitted`，回到上面检查 `DOCKER_NET_ADMIN`。
 ## 内置浏览器
 
 PentAGI 的 browser 工具向 scraper 发四个请求，本项目按同样契约自建：
