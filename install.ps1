@@ -40,7 +40,8 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-$RepoRoot = Split-Path -Parent $PSScriptRoot
+# install.ps1 位于仓库根目录，$PSScriptRoot 就是仓库根
+$RepoRoot = $PSScriptRoot
 . (Join-Path $RepoRoot 'scripts\lib\common.ps1')
 
 $env:PENTAGI_LOG = Join-Path $InstallDir 'install.log'
