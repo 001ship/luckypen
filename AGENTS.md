@@ -1,4 +1,4 @@
-# AGENTS.md — 给 AI Agent 的部署指令
+﻿# AGENTS.md — 给 AI Agent 的部署指令
 
 > 本文件面向自动化执行者（Claude Code / Cursor / DSH / Codex / Copilot 等）。
 > 人类用户请看 [README.md](README.md)。
