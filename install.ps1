@@ -36,7 +36,9 @@ param(
     [int]$ListenPort = 8443,
     [ValidateSet('auto', 'prepare', 'deploy')][string]$Stage = 'auto',
     [string]$Distro = 'PentAGI',
-    [string]$DownloadMirror = ''   # 可选：镜像加速前缀
+    [string]$DownloadMirror = '',   # 可选：镜像加速前缀
+    [switch]$Yes,                   # 无人值守：不询问，直接重启
+    [switch]$NoReboot               # 只准备不重启（给需要自己安排时间的场景）
 )
 
 $ErrorActionPreference = 'Continue'
@@ -51,6 +53,8 @@ if (-not (Test-Path $InstallDir)) { New-Item -ItemType Directory -Force -Path $I
 if (-not (Test-Admin)) {
     $args = @('-InstallDir', $InstallDir, '-ListenIp', $ListenIp, '-ListenPort', $ListenPort, '-Stage', $Stage, '-Distro', $Distro)
     if ($DeepSeekKey) { $args += @('-DeepSeekKey', $DeepSeekKey) }
+    if ($Yes) { $args += '-Yes' }
+    if ($NoReboot) { $args += '-NoReboot' }
     Invoke-Elevated -ScriptPath $PSCommandPath -Arguments $args
     exit
 }
@@ -241,8 +245,29 @@ if ($Stage -eq 'prepare') {
     Write-Host "    $PSCommandPath -InstallDir `"$InstallDir`"" -ForegroundColor White
     Write-Host ''
     Write-Host "  日志: $env:PENTAGI_LOG" -ForegroundColor Gray
+
+# 写状态文件，便于自动化/agent 判定结果
+$state = [ordered]@{
+    finished_at = (Get-Date).ToString('s')
+    result      = $(if ($code -eq '200') { 'ok' } else { 'warn' })
+    url         = "https://127.0.0.1:$ListenPort"
+    user        = 'admin@pentagi.com'
+    password    = 'admin'
+    install_dir = $InstallDir
+    log         = $env:PENTAGI_LOG
+    last_probe  = $code
+}
+try {
+    $state | ConvertTo-Json | Set-Content (Join-Path $InstallDir 'install-state.json') -Encoding utf8
+    Write-Host "  状态文件: $(Join-Path $InstallDir 'install-state.json')" -ForegroundColor Gray
+} catch { }
     Write-Host ''
-    if (-not $SkipRebootPrompt) {
+    if ($NoReboot) {
+        Info '已指定 -NoReboot，未自动重启。稍后手动重启即可自动继续。'
+    } elseif ($Yes) {
+        Info '无人值守模式：60 秒后自动重启'
+        & shutdown.exe /r /t 60 /c 'PentAGI 安装：重启以启用 WSL2'
+    } elseif (-not $SkipRebootPrompt) {
         $ans = Read-Host '现在重启？(y/N)'
         if ($ans -match '^(y|Y)') {
             Info '60 秒后重启...'
@@ -387,4 +412,20 @@ if ($code -eq '200') {
     Write-Host "  wsl -d $Distro -u root -- docker logs pentagi --tail 50" -ForegroundColor Gray
 }
 Write-Host "  日志: $env:PENTAGI_LOG" -ForegroundColor Gray
+
+# 写状态文件，便于自动化/agent 判定结果
+$state = [ordered]@{
+    finished_at = (Get-Date).ToString('s')
+    result      = $(if ($code -eq '200') { 'ok' } else { 'warn' })
+    url         = "https://127.0.0.1:$ListenPort"
+    user        = 'admin@pentagi.com'
+    password    = 'admin'
+    install_dir = $InstallDir
+    log         = $env:PENTAGI_LOG
+    last_probe  = $code
+}
+try {
+    $state | ConvertTo-Json | Set-Content (Join-Path $InstallDir 'install-state.json') -Encoding utf8
+    Write-Host "  状态文件: $(Join-Path $InstallDir 'install-state.json')" -ForegroundColor Gray
+} catch { }
 Write-Host ''

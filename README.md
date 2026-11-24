@@ -42,6 +42,49 @@
 
 不需要你预先装 Docker、WSL、Python、Git。
 
+## 三条路径，选一条
+
+| 场景 | 做法 |
+|---|---|
+| **丢给 AI Agent** | 给它仓库链接和一句「按 AGENTS.md 部署」 |
+| **一条命令装完** | `irm .../bootstrap.ps1 \| iex`（自动提权、下载、部署） |
+| **想看清楚每一步** | `git clone` 后手动跑 `install.ps1` |
+
+### 路径 1：让 AI Agent 来装
+
+把下面这段话发给 Claude Code / Cursor / DSH / Codex 任意一个：
+
+```
+帮我部署这个仓库：https://github.com/001ship/luckypen
+按 AGENTS.md 的流程执行，装完告诉我访问地址和验证结果。
+```
+
+仓库根目录有 [AGENTS.md](AGENTS.md)，里面写清了前置检查、执行命令、成功判据、
+中断续跑方式和已知失败模式。Agent 读它就能独立完成，不需要你盯着。
+
+### 路径 2：一条命令
+
+以**管理员身份**打开 PowerShell：
+
+```powershell
+irm https://raw.githubusercontent.com/001ship/luckypen/main/bootstrap.ps1 | iex
+```
+
+脚本会自动：环境预检 → 下载仓库 → 提权 → 调用安装 → 提示重启。
+
+想预置 LLM 密钥：
+
+```powershell
+$env:LUCKY_DEEPSEEK_KEY = 'sk-你的密钥'
+irm https://raw.githubusercontent.com/001ship/luckypen/main/bootstrap.ps1 | iex
+```
+
+### 路径 3：手动安装
+
+见下面「快速开始」。
+
+---
+
 ## 快速开始
 
 ### 1. 下载
@@ -111,6 +154,8 @@ install.ps1
 ```
 luckypen/
 ├── install.ps1                  一键安装（两阶段）
+├── bootstrap.ps1                远程引导（一键命令入口）
+├── AGENTS.md                    给 AI Agent 的部署指令
 ├── config/
 │   ├── docker-compose.yml       PentAGI 编排（含前端挂载、host-gateway）
 │   └── .env.example             配置模板（342 项）
