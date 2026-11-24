@@ -1,4 +1,4 @@
-﻿# 故障排查
+# 故障排查
 
 按现象索引。所有日志默认在 `C:\pentagi\install.log`，WSL 内日志在 `/var/log/`。
 

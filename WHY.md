@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 # 为什么会有这个仓库
 
