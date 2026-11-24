@@ -55,13 +55,15 @@ cd luckypen
 
 ### 2. 安装
 
-以**管理员身份**打开 PowerShell，执行：
+以**管理员身份**打开 PowerShell（开始菜单搜 PowerShell → 右键「以管理员身份运行」），执行：
 
 ```powershell
-.\install.ps1 -DeepSeekKey sk-你的密钥
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -DeepSeekKey sk-你的密钥
 ```
 
-> 没有 DeepSeek Key 也可以先装，装完编辑 `.env` 补上即可。
+> **为什么用这行而不是直接 `.\install.ps1`**：Windows 默认执行策略会拦截未签名脚本，报「无法加载，因为在此系统上禁止运行脚本」。`-ExecutionPolicy Bypass` 只对本次进程生效，不改系统设置。
+
+> 没有 DeepSeek Key 也可以先装：去掉 `-DeepSeekKey sk-xxx` 即可，装完编辑 `C:\pentagi\.env` 补上，再重启容器。
 > 脚本会自动提权，全程有进度输出。
 
 ### 3. 重启
