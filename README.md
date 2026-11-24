@@ -8,12 +8,15 @@
 
 `Windows 10 2004+` · `Windows 11` · `WSL2` · `Docker Engine 29`
 
+**忘了这个仓库是干嘛的？看 [WHY.md](WHY.md)**
+
 </div>
 
 ---
 
 ## Table of Contents
 
+- [为什么有这个仓库](WHY.md)
 - [Overview](#overview)
 - [Features](#features)
 - [Architecture](#architecture)
