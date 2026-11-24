@@ -56,6 +56,68 @@ if (-not (Test-Admin)) {
 }
 
 Write-Host ''
+# 把仓库里的配置与资源铺到安装目录（幂等，prepare / deploy 两阶段都会调用）
+function Install-ConfigFiles {
+    param([string]$Dir)
+    $cfg = Join-Path $RepoRoot 'config'
+    foreach ($n in 'docker-compose.yml', 'example.custom.provider.yml', 'example.ollama.provider.yml', 'example.bedrock.provider.yml') {
+        $src = Join-Path $cfg $n
+        if (Test-Path $src) { Copy-Item $src $Dir -Force }
+        else { Warn "缺少配置文件 config\$n（compose 挂载会失败）" }
+    }
+    foreach ($d in 'i18n', 'services') {
+        $src = Join-Path $RepoRoot $d
+        if (Test-Path $src) { Copy-Item $src (Join-Path $Dir $d) -Recurse -Force }
+    }
+}
+
+# 生成 .env（不存在时）；两阶段都会调用，保证 deploy 单独跑也能用
+function Ensure-EnvFile {
+    param([string]$Dir, [string]$Ip, [int]$Port, [string]$Key)
+    $envFile = Join-Path $Dir '.env'
+    if (Test-Path $envFile) { Ok '.env 已存在，保留'; return }
+    $cfg = Join-Path $RepoRoot 'config'
+    $tpl = Get-Content (Join-Path $cfg '.env.example') -Encoding utf8
+    $salt = Get-RandomHex 16
+    $pgpass = 'Pg' + (Get-RandomHex 12)
+    $overrides = [ordered]@{
+        'PENTAGI_LISTEN_IP'         = $Ip
+        'PENTAGI_LISTEN_PORT'       = "$Port"
+        'PUBLIC_URL'                = "https://localhost:$Port"
+        'COOKIE_SIGNING_SALT'       = $salt
+        'PENTAGI_POSTGRES_PASSWORD' = $pgpass
+        'PENTAGI_FE_DIR'            = '/opt/pentagi/fe-cn'
+        'EMBEDDING_PROVIDER'        = 'openai'
+        'EMBEDDING_URL'             = 'http://host.docker.internal:8080/v1'
+        'EMBEDDING_KEY'             = 'local-embed'
+        'EMBEDDING_MODEL'           = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
+        'EMBEDDING_BATCH_SIZE'      = '100'
+        'EMBEDDING_STRIP_NEW_LINES' = 'true'
+        'EMBEDDING_MAX_TEXT_BYTES'  = '8192'
+        'SCRAPER_PUBLIC_URL'        = 'http://host.docker.internal:8081/'
+        'SCRAPER_PRIVATE_URL'       = 'http://host.docker.internal:8081/'
+        'DUCKDUCKGO_ENABLED'        = 'true'
+        'SPLOITUS_ENABLED'          = 'true'
+        'ASSISTANT_USE_AGENTS'      = 'false'
+    }
+    if ($Key) { $overrides['DEEPSEEK_API_KEY'] = $Key }
+
+    $final = New-Object System.Collections.Generic.List[string]
+    $seen = @{}
+    foreach ($l in $tpl) {
+        if ($l -notmatch '^([A-Z][A-Z0-9_]*)=(.*)$') { $final.Add($l); continue }
+        $k = $Matches[1]
+        if ($seen.ContainsKey($k)) { continue }
+        $seen[$k] = $true
+        if ($overrides.Contains($k)) { $final.Add("$k=$($overrides[$k])") } else { $final.Add($l) }
+    }
+    foreach ($k in $overrides.Keys) {
+        if (-not $seen.ContainsKey($k)) { $final.Add("$k=$($overrides[$k])") }
+    }
+    Set-Content -Path $envFile -Value $final -Encoding utf8
+    Ok '已生成 .env（密钥随机化）'
+    if (-not $Key) { Warn '未提供 LLM Key，安装完成后需编辑 .env 填入 DEEPSEEK_API_KEY 等' }
+}
 Write-Host '=====================================================' -ForegroundColor Cyan
 Write-Host '   PentAGI 中文部署版 · 一键安装' -ForegroundColor Cyan
 Write-Host '=====================================================' -ForegroundColor Cyan
@@ -157,73 +219,11 @@ if ($Stage -eq 'prepare') {
     }
 
     Step '铺设配置文件'
-    $cfg = Join-Path $RepoRoot 'config'
-    Copy-Item (Join-Path $cfg 'docker-compose.yml') $InstallDir -Force
-    foreach ($n in 'example.custom.provider.yml', 'example.ollama.provider.yml', 'example.bedrock.provider.yml') {
-        $src = Join-Path $cfg $n
-        if (Test-Path $src) { Copy-Item $src $InstallDir -Force }
-    }
-    foreach ($d in 'i18n', 'services') {
-        $src = Join-Path $RepoRoot $d
-        if (Test-Path $src) {
-            Copy-Item $src (Join-Path $InstallDir $d) -Recurse -Force
-        }
-    }
+    Install-ConfigFiles -Dir $InstallDir
     Ok '配置与资源已铺设'
 
     Step '生成 .env'
-    $envFile = Join-Path $InstallDir '.env'
-    if (Test-Path $envFile) {
-        Ok '.env 已存在，保留'
-    } else {
-        $tpl = Get-Content (Join-Path $cfg '.env.example') -Encoding utf8
-        $salt = Get-RandomHex 16
-        $pgpass = 'Pg' + (Get-RandomHex 12)
-        $lines = New-Object System.Collections.Generic.List[string]
-        foreach ($l in $tpl) { $lines.Add($l) }
-
-        $overrides = [ordered]@{
-            'PENTAGI_LISTEN_IP'         = $ListenIp
-            'PENTAGI_LISTEN_PORT'       = "$ListenPort"
-            'PUBLIC_URL'                = "https://localhost:$ListenPort"
-            'COOKIE_SIGNING_SALT'       = $salt
-            'PENTAGI_POSTGRES_PASSWORD' = $pgpass
-            'PENTAGI_FE_DIR'            = '/opt/pentagi/fe-cn'
-            'EMBEDDING_PROVIDER'        = 'openai'
-            'EMBEDDING_URL'             = 'http://host.docker.internal:8080/v1'
-            'EMBEDDING_KEY'             = 'local-embed'
-            'EMBEDDING_MODEL'           = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
-            'EMBEDDING_BATCH_SIZE'      = '100'
-            'EMBEDDING_STRIP_NEW_LINES' = 'true'
-            'EMBEDDING_MAX_TEXT_BYTES'  = '8192'
-            'SCRAPER_PUBLIC_URL'        = 'http://host.docker.internal:8081/'
-            'SCRAPER_PRIVATE_URL'       = 'http://host.docker.internal:8081/'
-            'DUCKDUCKGO_ENABLED'        = 'true'
-            'SPLOITUS_ENABLED'          = 'true'
-            'ASSISTANT_USE_AGENTS'      = 'false'
-        }
-        if ($DeepSeekKey) { $overrides['DEEPSEEK_API_KEY'] = $DeepSeekKey }
-
-        $final = New-Object System.Collections.Generic.List[string]
-        $seen = @{}
-        foreach ($l in $lines) {
-            if ($l -notmatch '^([A-Z][A-Z0-9_]*)=(.*)$') { $final.Add($l); continue }
-            $k = $Matches[1]
-            if ($seen.ContainsKey($k)) { continue }
-            $seen[$k] = $true
-            if ($overrides.Contains($k)) { $final.Add("$k=$($overrides[$k])") }
-            else { $final.Add($l) }
-        }
-        foreach ($k in $overrides.Keys) {
-            if (-not $seen.ContainsKey($k)) { $final.Add("$k=$($overrides[$k])") }
-        }
-        Set-Content -Path $envFile -Value $final -Encoding utf8
-        Ok "已生成 .env（密钥随机化）"
-        if (-not $DeepSeekKey) {
-            Warn '未提供 LLM Key，安装完成后需编辑 .env 填入 DEEPSEEK_API_KEY 等'
-        }
-    }
-
+    Ensure-EnvFile -Dir $InstallDir -Ip $ListenIp -Port $ListenPort -Key $DeepSeekKey
     Step '注册重启后自动继续的任务'
     $taskName = 'PentAGI Install (stage 2)'
     $tr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`" -InstallDir `"$InstallDir`" -Stage deploy -ListenIp $ListenIp -ListenPort $ListenPort -Distro $Distro"
@@ -257,6 +257,11 @@ if ($Stage -eq 'prepare') {
 # =====================================================================
 #  阶段 2：部署
 # =====================================================================
+Step '铺设配置文件'
+Install-ConfigFiles -Dir $InstallDir
+Ensure-EnvFile -Dir $InstallDir -Ip $ListenIp -Port $ListenPort -Key $DeepSeekKey
+Ok '配置与资源已就绪'
+
 Step '检查 WSL 就绪状态'
 if (-not (Test-WslReady)) {
     Fail 'WSL 不可用。请确认已重启，并检查 WSL 功能是否启用'
