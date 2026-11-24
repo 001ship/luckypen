@@ -29,6 +29,7 @@
 - [中文界面实现](#中文界面实现)
 - [内置浏览器](#内置浏览器)
 - [向量嵌入](#向量嵌入)
+- [镜像自托管](#镜像自托管)
 - [运维与维护](#运维与维护)
 - [Configuration](#configuration)
 - [Troubleshooting](#troubleshooting)
@@ -341,6 +342,63 @@ EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
 
 模型经 `hf-mirror.com` 下载。更换模型需改 `.env` 的 `EMBEDDING_MODEL` 与 `scripts/wsl/start-stack.sh` 的 `EMBED_MODEL`；换模型后已有向量失效，需重建知识库。
 
+## 镜像自托管
+
+上游镜像随时可能消失：项目停更、镜像被下架、DMCA、账号异常。本方案提供两条退路。
+
+### 已备份的镜像
+
+以下镜像已复制到本项目的 Docker Hub 命名空间，可直接拉取：
+
+| 镜像 | 压缩体积 | 说明 |
+|---|---|---|
+| `001ship/pentagi:latest` | 265 MB | 上游 pentagi 原版（未汉化） |
+| `001ship/lucky-pentagi:latest` | 265 MB | 汉化版，中文层已内置 |
+| `001ship/pgvector:latest` | 147 MB | PostgreSQL 16 + pgvector |
+| `001ship/debian:latest` | 47 MB | agent 沙箱基础镜像 |
+| `001ship/postgres-exporter:v0.16.0` | 11 MB | 可选指标导出 |
+
+### 切换到自有镜像源
+
+上游不可用时，改 `.env` 三行即可，不用动 compose：
+
+```bash
+PENTAGI_IMAGE=001ship/lucky-pentagi:latest
+PGVECTOR_IMAGE=001ship/pgvector:latest
+PGEXPORTER_IMAGE=001ship/postgres-exporter:v0.16.0
+```
+
+然后重建：
+
+```powershell
+wsl -d PentAGI -u root -- bash -lc "cd /opt/pentagi && docker compose up -d --force-recreate"
+```
+
+### 自己备份一份
+
+换成你自己的 Docker Hub 账号：
+
+```powershell
+.\scripts\mirror-images.ps1 -DockerUser <你的用户名>
+```
+
+脚本会 pull → tag → push 最小可运行集合（3 个镜像，约 1.7 GB 解压后）。
+加 `-IncludeOptional` 连 Langfuse / Graphiti / 监控栈一起备份（再多约 5 GB）。
+加 `-ExportDir D:\backup` 额外 `docker save` 成 tar，做完全离线的副本。
+
+镜像清单在 [`config/images.manifest`](config/images.manifest)，标了用途、是否必需、体积。
+
+> **注意**：push 要走 `registry-1.docker.io`，拉取可以走加速源但推送没有。若直连不通，需要在 Windows 宿主上跑 HTTP 代理——`scripts/wsl/start-stack.sh` 会自动探测默认网关上的代理端口（默认 10090）并注入 `dockerd`，同时把加速源域名放进 `NO_PROXY` 以免拉取变慢。
+
+### 关于"项目彻底消失"
+
+镜像备份只冻结了运行状态。若上游停更，你手上这份会停在 `2.2.0-ce`。要完全自主还需要归档源码：
+
+```powershell
+git clone https://github.com/vxcontrol/pentagi.git C:\pentagi-src
+```
+
+本仓库的汉化层是运行时注入，不依赖源码版本，上游再怎么变都能叠加。
 ## 运维与维护
 
 ```powershell
