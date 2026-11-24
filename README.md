@@ -34,13 +34,22 @@
 
 ## 前置条件
 
-- **Windows 11**（build 22000+）或 Windows 10 21H2+
-- BIOS 中已开启 CPU 虚拟化（VT-x / AMD-V）
-- 至少 **8 GB** 内存、**20 GB** 可用磁盘
-- 能访问互联网（会下载约 700 MB 运行时依赖）
-- 管理员权限
+| 要求 | 说明 |
+|---|---|
+| **Windows 11**（推荐） | build 22000+，本方案主要验证环境 |
+| **Windows 10** | **build 19041（2004）及以上**可用，理论支持但未充分实测 |
+| CPU 虚拟化 | BIOS 里开启 VT-x / AMD-V，否则 WSL2 起不来 |
+| 内存 | ≥ 8 GB |
+| 磁盘 | ≥ 20 GB 可用（装完实际占约 9 GB） |
+| 网络 | 需下载约 700 MB 运行时依赖 + 1.5 GB 镜像 |
+| 权限 | 管理员 |
 
 不需要你预先装 Docker、WSL、Python、Git。
+
+> **Windows 10 说明**：build 19041 是 WSL2 支持 `wsl --import` 的起点，低于此版本无法导入
+> 发行版。19041~19043 的老版本 `wsl.exe` 可能不认 `--import --version` 参数，安装脚本对此
+> 做了自动回退。Win10 上若 Docker 或端口转发异常，先看
+> [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
 
 ## 三条路径，选一条
 

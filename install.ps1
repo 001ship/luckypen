@@ -133,10 +133,24 @@ Write-Host ''
 # ---------- 环境检查 ----------
 Step '检查系统环境'
 $os = Get-CimInstance Win32_OperatingSystem
-Info "系统: $($os.Caption) build $([Environment]::OSVersion.Version.Build)"
-if ([Environment]::OSVersion.Version.Build -lt 22000) {
-    Fail '需要 Windows 11 (build 22000+) 或 Windows 10 21H2+'
+$build = [Environment]::OSVersion.Version.Build
+Info "系统: $($os.Caption) build $build"
+
+# WSL2 的硬性底线是 Windows 10 2004 (build 19041)：
+#   - 19041 起支持 wsl --import / --set-default-version 2
+#   - 更早的版本连导入发行版都做不到
+# 19041~21999 属于 Windows 10，理论可用但本方案主要在 Win11 上验证。
+if ($build -lt 19041) {
+    Fail "Windows 版本过低（build $build）"
+    Fail 'WSL2 需要 Windows 10 2004 (build 19041) 或更高'
+    Fail '请先通过 Windows Update 升级系统'
     exit 1
+} elseif ($build -lt 22000) {
+    Warn "检测到 Windows 10（build $build），继续安装"
+    Warn 'WSL2 理论可用，但本方案主要在 Windows 11 上验证过'
+    Warn '若导入发行版或 Docker 启动异常，见 docs/TROUBLESHOOTING.md'
+} else {
+    Ok "Windows 11 (build $build)"
 }
 $virt = (Get-CimInstance Win32_Processor).VirtualizationFirmwareEnabled
 Info "CPU 虚拟化: $virt"
@@ -344,7 +358,17 @@ if (-not ((Get-WslDistros) -contains $Distro)) {
     New-Item -ItemType Directory -Force -Path $wslRoot | Out-Null
     Info "导入中（首次约需 1-2 分钟）..."
     & wsl.exe --import $Distro $wslRoot $tar --version 2 2>&1 | ForEach-Object { Info "  $_" }
-    if ($LASTEXITCODE -ne 0) { Fail "导入失败 (rc=$LASTEXITCODE)"; exit 1 }
+    $impRc = $LASTEXITCODE
+    if ($impRc -ne 0) {
+        # 部分 Win10 版本的 wsl.exe 不认 --version 参数，回退到默认导入
+        Warn "--version 2 导入失败（rc=$impRc），尝试默认方式重试"
+        & wsl.exe --import $Distro $wslRoot $tar 2>&1 | ForEach-Object { Info "  $_" }
+        $impRc = $LASTEXITCODE
+        if ($impRc -eq 0) {
+            Warn '已用默认方式导入；若发行版不是 WSL2，请手动执行 wsl --set-version'
+        }
+    }
+    if ($impRc -ne 0) { Fail "导入失败 (rc=$impRc)"; exit 1 }
     Ok "发行版已导入到 $wslRoot"
 } else {
     Ok "发行版 $Distro 已存在"

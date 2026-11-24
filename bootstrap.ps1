@@ -62,9 +62,12 @@ if (-not $isAdmin) {
 Say '环境预检：' 'Cyan'
 $build = [Environment]::OSVersion.Version.Build
 Say "  Windows build : $build"
-if ($build -lt 22000) {
-    Say '  ✗ 需要 Windows 11 (build 22000+) 或 Win10 21H2+' 'Red'
+if ($build -lt 19041) {
+    Say '  ✗ 需要 Windows 10 2004 (build 19041) 或更高' 'Red'
+    Say '    WSL2 在更早的版本上无法导入发行版' 'Gray'
     exit 1
+} elseif ($build -lt 22000) {
+    Say '  ! Windows 10 环境，理论可用但主要在 Win11 上验证' 'Yellow'
 }
 $freeGB = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
 Say "  磁盘可用      : $freeGB GB"

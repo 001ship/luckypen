@@ -15,7 +15,9 @@
 ### 前置检查（必须先做）
 
 ```powershell
-# 1. Windows 版本 >= 10.0.22000
+# 1. Windows 版本 >= 10.0.19041（Win10 2004 / Win11 均可）
+#    低于 19041 无法导入 WSL2 发行版，必须拒绝
+#    19041~21999 属于 Win10，可继续但需提示"未充分实测"
 [Environment]::OSVersion.Version.Build
 
 # 2. 必须能提权（管理员）
