@@ -104,7 +104,8 @@ function Ensure-EnvFile {
         'SPLOITUS_ENABLED'          = 'true'
         'ASSISTANT_USE_AGENTS'      = 'false'
     }
-    if ($Key) { $overrides['DEEPSEEK_API_KEY'] = $Key }
+    # 无论有没有 Key 都写入这一行：留空时用户能一眼找到该填哪里
+    $overrides['DEEPSEEK_API_KEY'] = if ($Key) { $Key } else { '' }
 
     $final = New-Object System.Collections.Generic.List[string]
     $seen = @{}
@@ -170,6 +171,42 @@ if ($Stage -eq 'auto') {
 #  阶段 1：准备（需要重启）
 # =====================================================================
 if ($Stage -eq 'prepare') {
+
+    # ---------- 重启告知与确认（必须在动手前） ----------
+    Write-Host ''
+    Write-Host '-----------------------------------------------------' -ForegroundColor Yellow
+    Write-Host '  ⚠  本次安装需要重启电脑 1 次' -ForegroundColor Yellow
+    Write-Host '-----------------------------------------------------' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host '  为什么必须重启：' -ForegroundColor White
+    Write-Host '    PentAGI 跑在 WSL2 里，虚拟化层只在开机时加载，' -ForegroundColor Gray
+    Write-Host '    启用功能后不重启，WSL 无法工作。这一点无法绕过。' -ForegroundColor Gray
+    Write-Host ''
+    Write-Host '  重启后会怎样：' -ForegroundColor White
+    Write-Host '    阶段 1 结束时自动重启（本脚本可设置延迟），' -ForegroundColor Gray
+    Write-Host '    重启并登录后计划任务自动继续，约 20~40 分钟装完。' -ForegroundColor Gray
+    Write-Host ''
+    Write-Host '  装完在哪访问：' -ForegroundColor White
+    Write-Host "    https://127.0.0.1:$ListenPort   账号 admin@pentagi.com / admin" -ForegroundColor Gray
+    Write-Host ''
+    Write-Host '  仍然只是准备阶段，现在还没开始装任何东西。' -ForegroundColor DarkGray
+    Write-Host ''
+
+    if ($Yes) {
+        Write-Host '  无人值守模式：15 秒后自动开始，按 Ctrl+C 可中止' -ForegroundColor Yellow
+        for ($i = 15; $i -gt 0; $i--) {
+            Write-Host ("  倒计时 {0,2} 秒 ...  " -f $i) -NoNewline -ForegroundColor Yellow
+            Start-Sleep -Seconds 1
+        }
+        Write-Host ''
+        Info '继续执行'
+    } else {
+        $ans = Read-Host '  确认开始安装？(y/N)'
+        if ($ans -notmatch '^(y|Y)') {
+            Info '已取消，未做任何改动。'
+            exit 0
+        }
+    }
 
     Step '启用 WSL2 相关 Windows 功能'
     foreach ($feat in @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform')) {
