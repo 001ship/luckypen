@@ -31,6 +31,21 @@ if ! pgrep -x containerd >/dev/null 2>&1; then
   sleep 3
 fi
 if ! pgrep -x dockerd >/dev/null 2>&1; then
+  # 探测 Windows 宿主机上的 HTTP 代理。
+  # WSL 里 127.0.0.1 指向 WSL 自身，访问宿主代理要用默认网关地址。
+  # 拉镜像走 registry-mirrors（见 daemon.json），push 只能走 registry-1.docker.io，
+  # 在直连不通的网络里必须靠这个代理。
+  HOST_GW=$(ip route show default 2>/dev/null | awk '{print $3}' | head -1)
+  HOST_PROXY=""
+  if [ -n "${HOST_GW:-}" ] && timeout 3 bash -c "echo > /dev/tcp/$HOST_GW/${HOST_PROXY_PORT:-10090}" 2>/dev/null; then
+    HOST_PROXY="http://$HOST_GW:${HOST_PROXY_PORT:-10090}"
+    log "detected host proxy: $HOST_PROXY"
+  fi
+  if [ -n "$HOST_PROXY" ]; then
+    export HTTP_PROXY="$HOST_PROXY" HTTPS_PROXY="$HOST_PROXY"
+    # 镜像加速源直连更快，不要绕代理
+    export NO_PROXY="localhost,127.0.0.1,::1,docker.1panel.live,docker.m.daocloud.io,hub.rat.dev"
+  fi
   nohup dockerd -H unix:///var/run/docker.sock >/var/log/dockerd.log 2>&1 &
 fi
 for i in $(seq 1 60); do

@@ -1,0 +1,53 @@
+# 镜像清单
+#
+# 格式：<用途> | <上游镜像> | <是否必需> | <体积> | <说明>
+#
+# 用途：
+#   core    主栈必需，缺了装不起来
+#   sandbox agent 执行命令的沙箱基础镜像
+#   optional 可选组件（Langfuse / Graphiti / 监控栈），不装也能用
+#
+# 上游镜像如果被删除，用 scripts/mirror-images.ps1 从自有仓库拉取。
+# 切换镜像源只改 .env 里的 *_IMAGE 变量，不用动 compose。
+
+# ---------- 主栈 ----------
+core | vxcontrol/pentagi:latest                          | 必需 | 889 MB | PentAGI 主服务（Go 后端 + React 前端）
+core | vxcontrol/pgvector:latest                         | 必需 | 614 MB | PostgreSQL 16 + pgvector，持久化与向量检索
+
+# ---------- 沙箱 ----------
+sandbox | debian:latest                                 | 必需 | 187 MB | agent 执行命令的隔离容器基础镜像
+
+# ---------- 可选：指标导出 ----------
+optional | quay.io/prometheuscommunity/postgres-exporter:v0.16.0 | 可选 | 35 MB | pgvector 指标导出，不装不影响功能
+
+# ---------- 可选：上游 scraper（本项目已用自建替代） ----------
+optional | vxcontrol/scraper:latest                     | 不用 | ~250 MB | 网页抓取。本项目用 services/scraper 替代，仅在你想恢复官方方案时使用
+
+# ---------- 可选栈：Langfuse（docker-compose-langfuse.yml） ----------
+optional | langfuse/langfuse:3                          | 可选 | ~500 MB | LLM 调用追踪 Web
+optional | langfuse/langfuse-worker:3                   | 可选 | ~400 MB | LLM 调用追踪 Worker
+optional | clickhouse/clickhouse-server:24               | 可选 | ~800 MB | Langfuse 存储
+optional | redis:7                                      | 可选 | ~130 MB | Langfuse 缓存
+optional | cgr.dev/chainguard/minio:latest              | 可选 | ~150 MB | Langfuse 对象存储
+optional | postgres:16                                  | 可选 | ~430 MB | Langfuse 元数据
+
+# ---------- 可选栈：Graphiti 知识图谱（docker-compose-graphiti.yml） ----------
+optional | vxcontrol/graphiti:latest                    | 可选 | ~700 MB | Neo4j 知识图谱服务
+optional | neo4j:5                                      | 可选 | ~600 MB | 图数据库
+
+# ---------- 可选栈：可观测性（docker-compose-observability.yml） ----------
+optional | grafana/grafana:11.4.0                       | 可选 | ~450 MB | 仪表盘
+optional | prom/node-exporter:v1.8.2                    | 可选 | ~30 MB  | 主机指标
+optional | gcr.io/cadvisor/cadvisor:v0.51.0             | 可选 | ~70 MB  | 容器指标
+optional | victoriametrics/victoria-metrics:v1.108.1    | 可选 | ~50 MB  | 时序库
+optional | grafana/loki:3.3.2                           | 可选 | ~80 MB  | 日志聚合
+optional | jaegertracing/all-in-one:1.56.0              | 可选 | ~70 MB  | 链路追踪
+optional | otel/opentelemetry-collector-contrib:0.116.1 | 可选 | ~200 MB | OTel 采集器
+
+# =====================================================================
+# 最小可运行集合（只装这些就够用）：
+#   vxcontrol/pentagi:latest
+#   vxcontrol/pgvector:latest
+#   debian:latest
+#   加上本仓库的 embedding / scraper sidecar（宿主进程，非镜像）
+# =====================================================================
