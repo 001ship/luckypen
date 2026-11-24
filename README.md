@@ -33,6 +33,7 @@
 - [渗透沙箱](#渗透沙箱)
 - [内置浏览器](#内置浏览器)
 - [向量嵌入](#向量嵌入)
+- [镜像拉取加速](#镜像拉取加速)
 - [镜像自托管](#镜像自托管)
 - [运维与维护](#运维与维护)
 - [Configuration](#configuration)
@@ -426,6 +427,169 @@ EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
 
 模型经 `hf-mirror.com` 下载。更换模型需改 `.env` 的 `EMBEDDING_MODEL` 与 `scripts/wsl/start-stack.sh` 的 `EMBED_MODEL`；换模型后已有向量失效，需重建知识库。
 
+## 镜像拉取加速
+
+首次安装要拉约 7.3 GB 镜像（pentagi 889 MB + pgvector 614 MB + kali-linux 5.7 GB）。这一节讲怎么把这一步压到最短。
+
+### 先判断你走的是哪条路
+
+```powershell
+# 1. dockerd 有没有配代理
+wsl -d PentAGI -u root -- docker info | Select-String -Pattern "HTTP Proxy|HTTPS Proxy"
+
+# 2. 当前生效的加速源
+wsl -d PentAGI -u root -- docker info --format '{{json .RegistryConfig.Mirrors}}'
+```
+
+| 情况 | 推荐做法 | 实测速度 |
+|---|---|---|
+| 有代理，mirrors 为空 | **保持现状，直连** | 4635 MB/分钟 |
+| 有代理，mirrors 有值 | **清空 mirrors**（见下文） | 同上 |
+| 没代理 | 用加速源，接受慢 | 24 MB/分钟 |
+| 没代理且加速源全废 | 离线导入（见下文） | — |
+
+> 这两个数字是同一台机器、同一个 5.7 GB 镜像实测的，差 **193 倍**。
+
+### 方案 A：有代理就用代理直连（最快）
+
+Docker 的 `registry-mirrors` 和代理是互斥的——配了 mirrors 就走加速源，不会走代理。而对 `vxcontrol/*` 这类镜像，加速源普遍支持很差：
+
+| 加速源 | 实测表现 |
+|---|---|
+| `docker.m.daocloud.io` | 返回 403，明确拒绝（白名单不含 vxcontrol） |
+| `docker.1panel.live` | manifest 能取，实际拉层时建连后零字节停滞 |
+| `hub.rat.dev` | 302 跳转异常，部分层报 `magic number mismatch` |
+| `docker.1ms.run` | 类似 1panel，不稳定 |
+| `dockerproxy.net` | 连接超时 |
+
+docker 会在这些源之间反复重试，整体速度被拖到 24 MB/分钟。
+
+**改成代理直连：**
+
+```powershell
+# 1. 确认 dockerd 已带代理（start-stack.sh 会自动探测宿主代理并注入）
+wsl -d PentAGI -u root -- docker info | Select-String -Pattern "HTTP Proxy"
+
+# 2. 清空 mirrors
+wsl -d PentAGI -u root -- bash -lc "python3 -c \"
+import json
+p='/etc/docker/daemon.json'
+d=json.load(open(p))
+d['registry-mirrors']=[]
+json.dump(d,open(p,'w'),indent=2)
+\""
+
+# 3. 重启 dockerd
+wsl -d PentAGI -u root -- /usr/local/bin/pentagi-start.sh
+
+# 4. 确认 mirrors 已空
+wsl -d PentAGI -u root -- docker info --format '{{json .RegistryConfig.Mirrors}}'
+```
+
+`start-stack.sh` 已内置这个逻辑：探测到宿主代理就自动清空 mirrors，探测不到才恢复加速源。所以正常情况下你不需要手动做。
+
+**代理端口不是 10090？**
+
+```powershell
+wsl -d PentAGI -u root -- bash -lc "HOST_PROXY_PORT=7890 /usr/local/bin/pentagi-start.sh"
+```
+
+### 方案 B：没代理，挑一个能用的加速源
+
+按实测可用性排序：
+
+```json
+{
+  "registry-mirrors": [
+    "https://docker.1panel.live",
+    "https://docker.m.daocloud.io",
+    "https://hub.rat.dev"
+  ]
+}
+```
+
+> 注意：加速源的质量随时在变，今天能用的明天可能就废了。而且各家对 `vxcontrol/*` 的支持尤其差，因为它们通常只缓存热门镜像。
+
+**从你的 Docker Hub 仓库拉**（我已备份，同样是公共镜像，不需要登录）：
+
+```bash
+PENTAGI_IMAGE=001ship/pentagi:latest
+PGVECTOR_IMAGE=001ship/pgvector:latest
+```
+
+这样至少避开 `vxcontrol/*` 这个被多数加速源拒绝的路径。但 kali 没备份（22.66 GB 太大），仍需走原路径。
+
+### 方案 C：完全离线导入
+
+网络实在不行，用别的机器拉好再传过来。
+
+```powershell
+# 在有网、有代理的机器上导出
+wsl -d PentAGI -u root -- docker save -o /mnt/d/kali.tar vxcontrol/kali-linux:latest
+
+# 拷到目标机器后导入
+wsl -d PentAGI -u root -- docker load -i /mnt/d/kali.tar
+```
+
+体积参考：kali 导出后约 6 GB（压缩状态），U 盘或网盘传输比慢慢拉快得多。
+
+也可以只导出小的两个：
+
+```powershell
+wsl -d PentAGI -u root -- docker save -o /mnt/d/core.tar vxcontrol/pentagi:latest vxcontrol/pgvector:latest
+# 约 1.5 GB
+```
+
+### 方案 D：分步拉，先验证链路
+
+别一上来就拉 5.7 GB。先用小镜像测通：
+
+```powershell
+# 1. 小镜像测链路（187 MB）
+wsl -d PentAGI -u root -- docker pull debian:latest
+
+# 2. 中等镜像（614 MB）
+wsl -d PentAGI -u root -- docker pull vxcontrol/pgvector:latest
+
+# 3. 主镜像（889 MB）
+wsl -d PentAGI -u root -- docker pull vxcontrol/pentagi:latest
+
+# 4. 最后才是 kali（5.7 GB）
+wsl -d PentAGI -u root -- docker pull vxcontrol/kali-linux:latest
+```
+
+每步失败就停下来先解决链路问题，避免白等几小时。
+
+### 自己测速
+
+不确定当前链路快不快，跑这个：
+
+```powershell
+wsl -d PentAGI -u root -- bash -lc '
+A=$(du -sm /var/lib/containerd/io.containerd.content.v1.content 2>/dev/null | cut -f1)
+sleep 60
+B=$(du -sm /var/lib/containerd/io.containerd.content.v1.content 2>/dev/null | cut -f1)
+echo "当前速度: $((B-A)) MB/分钟"
+'
+```
+
+| 结果 | 判断 |
+|---|---|
+| > 1000 MB/分钟 | 很好，代理直连在工作 |
+| 100~1000 MB/分钟 | 可接受 |
+| < 50 MB/分钟 | 慢，换方案 |
+
+按 5.7 GB 算：1000 MB/分钟约 6 分钟，50 MB/分钟要 2 小时。
+
+### 常见误区
+
+**"我开了代理，应该快了"** —— 不一定。如果 `registry-mirrors` 有值，docker 走加速源，代理根本不参与。必须先清空 mirrors。
+
+**"换成另一个加速源会快"** —— 多数情况无效，因为问题是这些源对 `vxcontrol/*` 的支持，不是线路质量。
+
+**"拉了一次失败，重试就会快"** —— docker 会断点续传已下载的层，重试确实不浪费已下载部分，但速度不会变快。
+
+**"用 VPN 全局模式就行"** —— WSL2 默认不在 VPN 的转发范围内。要么用代理（推荐），要么在 Windows 上配 TUN 模式并确认 WSL 流量被接管。
 ## 镜像自托管
 
 上游镜像随时可能消失：项目停更、镜像被下架、DMCA、账号异常。本方案提供两条退路。
